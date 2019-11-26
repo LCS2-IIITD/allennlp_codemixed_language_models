@@ -9,7 +9,7 @@
 
   "dataset_reader": {
     "type": "interleaving",
-    "scheme": "all_at_once",//round_robin
+    "scheme": "round_robin",//round_robin
     "readers":{
         "lang1": {
             "type": "simple_lm_reader",

@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Union, Optional, Any
+from typing import Dict, List, Tuple, Union, Optional
 
 import numpy as np
 import torch
@@ -13,18 +13,18 @@ from allennlp.nn.util import get_text_field_mask
 from allennlp.training.metrics import Perplexity
 
 
-class GirNetCell(torch.nn.Module):
-
-    def __init__(self, lstm1: Seq2SeqEncoder, lstm2: Seq2SeqEncoder) -> None:
-        super(GirNetCell, self).__init__()
-
-        self.lstm1 = lstm1
-        self.lstm2 = lstm2
-
-    def forward(self, input: Any, hidden: Any) -> Any:
-        lstm_1_out = self.lstm1(input)
-        lstm_2_out = self.lstm2(input)
-
+# class GirNetCell(torch.nn.Module):
+#
+#     def __init__(self, lstm1: Seq2SeqEncoder, lstm2: Seq2SeqEncoder) -> None:
+#         super(GirNetCell, self).__init__()
+#
+#         self.lstm1 = lstm1
+#         self.lstm2 = lstm2
+#
+#     def forward(self, input: Any, hidden: Any) -> Any:
+#         lstm_1_out = self.lstm1(input)
+#         lstm_2_out = self.lstm2(input)
+#
 
 class _SoftmaxLoss(torch.nn.Module):
     """
@@ -126,8 +126,9 @@ class GirNetLM(Model):
 
         # TODO: Make 2 contextualizer
         import copy
-        self._contextualizer_2 = copy.deepcopy(contextualizer)
-        self._contextualizer = contextualizer
+        self._contextualizer_lang1 = copy.deepcopy(contextualizer)
+        self._contextualizer_lang2 = copy.deepcopy(contextualizer)
+        self._contextualizer_cm = contextualizer
         self._bidirectional = bidirectional
 
         # The dimension for making predictions just in the forward
@@ -139,21 +140,41 @@ class GirNetLM(Model):
 
         # TODO(joelgrus): more sampled softmax configuration options, as needed.
         if num_samples is not None:
-            self._softmax_loss = SampledSoftmaxLoss(
+            self._lang1_softmax_loss = SampledSoftmaxLoss(
+                num_words=vocab.get_vocab_size(),
+                embedding_dim=self._forward_dim,
+                num_samples=num_samples,
+                sparse=sparse_embeddings,
+            )
+            self._lang2_softmax_loss = SampledSoftmaxLoss(
+                num_words=vocab.get_vocab_size(),
+                embedding_dim=self._forward_dim,
+                num_samples=num_samples,
+                sparse=sparse_embeddings,
+            )
+            self._cm_softmax_loss = SampledSoftmaxLoss(
                 num_words=vocab.get_vocab_size(),
                 embedding_dim=self._forward_dim,
                 num_samples=num_samples,
                 sparse=sparse_embeddings,
             )
         else:
-            self._softmax_loss = _SoftmaxLoss(
+            self._lang1_softmax_loss = _SoftmaxLoss(
+                num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim
+            )
+            self._lang2_softmax_loss = _SoftmaxLoss(
+                num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim
+            )
+            self._cm_loss = _SoftmaxLoss(
                 num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim
             )
 
         # This buffer is now unused and exists only for backwards compatibility reasons.
         self.register_buffer("_last_average_loss", torch.zeros(1))
 
-        self._perplexity = Perplexity()
+        self._lang1_perplexity = Perplexity()
+        self._lang2_perplexity = Perplexity()
+        self._cm_perplexity = Perplexity()
 
         if dropout:
             self._dropout = torch.nn.Dropout(dropout)
@@ -163,6 +184,7 @@ class GirNetLM(Model):
         if initializer is not None:
             initializer(self)
 
+    # SAFE
     def _get_target_token_embeddings(
             self, token_embeddings: torch.Tensor, mask: torch.Tensor, direction: int
     ) -> torch.Tensor:
@@ -183,6 +205,7 @@ class GirNetLM(Model):
             token_embeddings: torch.Tensor,
             forward_targets: torch.Tensor,
             backward_targets: torch.Tensor = None,
+            label="cm"
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # If bidirectional, lm_embeddings is shape (batch_size, timesteps, dim * 2)
         # If unidirectional, lm_embeddings is shape (batch_size, timesteps, dim)
@@ -191,13 +214,13 @@ class GirNetLM(Model):
         if self._bidirectional:
             forward_embeddings, backward_embeddings = lm_embeddings.chunk(2, -1)
             backward_loss = self._loss_helper(
-                1, backward_embeddings, backward_targets, token_embeddings
+                1, backward_embeddings, backward_targets, token_embeddings, label=label
             )
         else:
             forward_embeddings = lm_embeddings
             backward_loss = None
 
-        forward_loss = self._loss_helper(0, forward_embeddings, forward_targets, token_embeddings)
+        forward_loss = self._loss_helper(0, forward_embeddings, forward_targets, token_embeddings, label=label)
         return forward_loss, backward_loss
 
     def _loss_helper(
@@ -206,6 +229,7 @@ class GirNetLM(Model):
             direction_embeddings: torch.Tensor,
             direction_targets: torch.Tensor,
             token_embeddings: torch.Tensor,
+            label="cm"
     ) -> Tuple[int, int]:
         mask = direction_targets > 0
         # we need to subtract 1 to undo the padding id since the softmax
@@ -223,21 +247,15 @@ class GirNetLM(Model):
         # Assuming batches include full sentences, forward and backward
         # directions have the same number of samples, so sum up loss
         # here then divide by 2 just below
-        if not self._softmax_loss.tie_embeddings or not self._use_character_inputs:
-            return self._softmax_loss(non_masked_embeddings, non_masked_targets)
-        else:
-            # we also need the token embeddings corresponding to the
-            # the targets
-            raise NotImplementedError(
-                "This requires SampledSoftmaxLoss, which isn't implemented yet."
-            )
-
-            non_masked_token_embeddings = self._get_target_token_embeddings(
-                token_embeddings, mask, direction
-            )
-            return self._softmax(
-                non_masked_embeddings, non_masked_targets, non_masked_token_embeddings
-            )
+        if label is "lang1":
+            if not self._lang1_softmax_loss.tie_embeddings or not self._use_character_inputs:
+                return self._lang1_softmax_loss(non_masked_embeddings, non_masked_targets)
+        elif label is "lang2":
+            if not self._lang2_softmax_loss.tie_embeddings or not self._use_character_inputs:
+                return self._lang2_softmax_loss(non_masked_embeddings, non_masked_targets)
+        elif label is "cm":
+            if not self._cm_softmax_loss.tie_embeddings or not self._use_character_inputs:
+                return self._cm_softmax_loss(non_masked_embeddings, non_masked_targets)
 
     def delete_softmax(self) -> None:
         """
@@ -246,6 +264,7 @@ class GirNetLM(Model):
         """
         self._softmax_loss = None
 
+    # UNSAFE
     def num_layers(self) -> int:
         """
         Returns the depth of this LM. That is, how many layers the contextualizer has plus one for
@@ -307,25 +326,71 @@ class GirNetLM(Model):
 
         """
 
-        mask = get_text_field_mask(source) #safe
+        # get text field mask for each input; safe operation
+        lang1_mask = get_text_field_mask(lang1)
+        lang2_mask = get_text_field_mask(lang2)
+        cm_mask = get_text_field_mask(cm)
 
         # shape (batch_size, timesteps, embedding_size)
-        embeddings = self._text_field_embedder(source) # safe
+        lang1_embeddings = self._text_field_embedder(lang1)
+        lang2_embeddings = self._text_field_embedder(lang2)
+        cm_embeddings = self._text_field_embedder(cm)
 
         # Either the top layer or all layers.
-        contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer(
-            embeddings, mask
-        ) # safe
+        lang1_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang1(
+            lang1_embeddings, lang1_mask)
+        lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
+            lang2_embeddings, lang2_mask)
+        cm_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_cm(
+            cm_embeddings, cm_mask)
 
-        # TODO: contextualised embeddings 2
-        # contextual_embeddings_2: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_2(
-        #     embeddings, mask
-        # )
+        return_dict = {}
+
+        lang1_dict = self._each_lang_lost(
+            mask=lang1_mask,
+            source=lang1,
+            embeddings=lang1_embeddings,
+            contextual_embeddings=lang1_contextual_embeddings,
+            label='lang1'
+        )
+        return_dict.update(lang1_dict)
+
+        lang2_dict = self._each_lang_lost(
+            mask=lang2_mask,
+            source=lang2,
+            embeddings=lang2_embeddings,
+            contextual_embeddings=lang2_contextual_embeddings,
+            label='lang2'
+        )
+        return_dict.update(lang2_dict)
+
+        cm_dict = self._each_lang_lost(
+            mask=cm_mask,
+            source=cm,
+            embeddings=cm_embeddings,
+            contextual_embeddings=cm_contextual_embeddings,
+            label='cm'
+        )
+        return_dict.update(cm_dict)
+
+        average_loss = (lang1_dict['lang1_loss'] + lang2_dict['lang2_loss'] + (2*cm_dict['cm_loss'])) / 4
+        return_dict.update({
+            "loss": average_loss
+        })
+
+        return return_dict
+
+    def _each_lang_lost(self, mask,
+                        source: Dict[str, torch.LongTensor],
+                        embeddings,
+                        contextual_embeddings: torch.Tensor,
+                        label
+                        ):
 
         return_dict = {}
 
         # If we have target tokens, calculate the loss.
-        token_ids = source.get("tokens") #safe
+        token_ids = source.get("tokens")  # safe
         if token_ids is not None:
             assert isinstance(contextual_embeddings, torch.Tensor)
 
@@ -340,12 +405,16 @@ class GirNetLM(Model):
                 backward_targets = None
 
             # add dropout
-            contextual_embeddings_with_dropout = self._dropout(contextual_embeddings)
+            contextual_embeddings_with_dropout = self._dropout(contextual_embeddings)  # TODO: unsafe
 
             # compute softmax loss
             forward_loss, backward_loss = self._compute_loss(
-                contextual_embeddings_with_dropout, embeddings, forward_targets, backward_targets
-            )
+                contextual_embeddings_with_dropout,
+                embeddings,
+                forward_targets,
+                backward_targets,
+                label=label
+            )  # TODO: unsafe
 
             num_targets = torch.sum((forward_targets > 0).long())
             if num_targets > 0:
@@ -356,34 +425,42 @@ class GirNetLM(Model):
             else:
                 average_loss = torch.tensor(0.0).to(forward_targets.device)
 
-            self._perplexity(average_loss)
+            if label is 'lang1':
+                self._lang1_perplexity(average_loss)
+            elif label is 'lang2':
+                self._lang2_perplexity(average_loss)
+            elif label is 'cm':
+                self._cm_perplexity(average_loss)
 
             if num_targets > 0:
                 return_dict.update(
                     {
-                        "loss": average_loss,
-                        "forward_loss": forward_loss / num_targets.float(),
-                        "batch_weight": num_targets.float(),
+                        f"{label}_loss": average_loss,
+                        f"{label}_forward_loss": forward_loss / num_targets.float(),
+                        f"{label}_batch_weight": num_targets.float(),
                     }
                 )
                 if backward_loss is not None:
-                    return_dict["backward_loss"] = backward_loss / num_targets.float()
+                    return_dict[f"{label}_backward_loss"] = backward_loss / num_targets.float()
             else:
                 # average_loss zero tensor, return it for all
-                return_dict.update({"loss": average_loss, "forward_loss": average_loss})
+                return_dict.update({f"{label}_loss": average_loss, "forward_loss": average_loss})
                 if backward_loss is not None:
-                    return_dict["backward_loss"] = average_loss
+                    return_dict[f"{label}_backward_loss"] = average_loss
 
         return_dict.update(
             {
-                # Note: These embeddings do not have dropout applied.
-                "lm_embeddings": contextual_embeddings,
-                "noncontextual_token_embeddings": embeddings,
-                "mask": mask,
+                f"{label}_lm_embeddings": contextual_embeddings,
+                f"{label}_noncontextual_token_embeddings": embeddings,
+                f"{label}_mask": mask,
             }
         )
 
         return return_dict
 
     def get_metrics(self, reset: bool = False):
-        return {"perplexity": self._perplexity.get_metric(reset=reset)}
+        return {
+            "perplexity_lang1": self._lang1_perplexity.get_metric(reset=reset),
+            "perplexity_lang2": self._lang2_perplexity.get_metric(reset=reset),
+            "perplexity_cm": self._cm_perplexity.get_metric(reset=reset)
+        }
