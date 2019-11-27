@@ -1,15 +1,11 @@
-from typing import Dict, List, Tuple, Union, Optional
-
 import numpy as np
-import torch
-from allennlp.common.checks import ConfigurationError
 from allennlp.data.vocabulary import Vocabulary
 from allennlp.models.model import Model
 from allennlp.modules.sampled_softmax_loss import SampledSoftmaxLoss
 from allennlp.modules.seq2seq_encoders import Seq2SeqEncoder
 from allennlp.modules.text_field_embedders import TextFieldEmbedder
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
-from allennlp.nn.util import get_text_field_mask
+from allennlp.nn.util import *
 from allennlp.training.metrics import Perplexity
 
 
@@ -24,7 +20,7 @@ from allennlp.training.metrics import Perplexity
 #     def forward(self, input: Any, hidden: Any) -> Any:
 #         lstm_1_out = self.lstm1(input)
 #         lstm_2_out = self.lstm2(input)
-#
+
 
 class _SoftmaxLoss(torch.nn.Module):
     """
@@ -106,6 +102,7 @@ class GirNetLM(Model):
             vocab: Vocabulary,
             text_field_embedder: TextFieldEmbedder,
             contextualizer: Seq2SeqEncoder,
+            main_contextualizer: Seq2SeqEncoder,
             dropout: float = None,
             num_samples: int = None,
             sparse_embeddings: bool = False,
@@ -128,8 +125,10 @@ class GirNetLM(Model):
         import copy
         self._contextualizer_lang1 = copy.deepcopy(contextualizer)
         self._contextualizer_lang2 = copy.deepcopy(contextualizer)
-        self._contextualizer_cm = contextualizer
+        # self._contextualizer_cm = contextualizer
         self._bidirectional = bidirectional
+
+        self.main_contextualizer = main_contextualizer
 
         # The dimension for making predictions just in the forward
         # (or backward) direction.
@@ -154,7 +153,7 @@ class GirNetLM(Model):
             )
             self._cm_softmax_loss = SampledSoftmaxLoss(
                 num_words=vocab.get_vocab_size(),
-                embedding_dim=self._forward_dim,
+                embedding_dim= self.main_contextualizer.get_output_dim() // 2,
                 num_samples=num_samples,
                 sparse=sparse_embeddings,
             )
@@ -166,7 +165,7 @@ class GirNetLM(Model):
                 num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim
             )
             self._cm_loss = _SoftmaxLoss(
-                num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim
+                num_words=vocab.get_vocab_size(), embedding_dim=self.main_contextualizer.get_output_dim() // 2,
             )
 
         # This buffer is now unused and exists only for backwards compatibility reasons.
@@ -238,10 +237,15 @@ class GirNetLM(Model):
         # shape (batch_size * timesteps, )
         non_masked_targets = direction_targets.masked_select(mask) - 1
 
-        # shape (batch_size * timesteps, embedding_dim)
-        non_masked_embeddings = direction_embeddings.masked_select(mask.unsqueeze(-1)).view(
-            -1, self._forward_dim
-        )
+        if label is "lang1" or label is "lang2":
+            non_masked_embeddings = direction_embeddings.masked_select(mask.unsqueeze(-1)).view(
+                -1, self._forward_dim
+            )
+        else:
+            # shape (batch_size * timesteps, embedding_dim)
+            non_masked_embeddings = direction_embeddings.masked_select(mask.unsqueeze(-1)).view(
+                -1, self.main_contextualizer.get_output_dim() // 2
+            )
         # note: need to return average loss across forward and backward
         # directions, but total sum loss across all batches.
         # Assuming batches include full sentences, forward and backward
@@ -341,8 +345,18 @@ class GirNetLM(Model):
             lang1_embeddings, lang1_mask)
         lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
             lang2_embeddings, lang2_mask)
-        cm_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_cm(
+
+        ## GIRNET STUFF
+        # get lang1 and lang2 embedding of code_mixed data
+        cm_lang1_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang1(
             cm_embeddings, cm_mask)
+        cm_lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
+            cm_embeddings, cm_mask)
+        cm_cat_contextual_embeddings = torch.cat([cm_lang1_contextual_embeddings, cm_lang2_contextual_embeddings], -1)
+
+        # now get a gate
+        cm_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self.main_contextualizer(
+            cm_cat_contextual_embeddings, cm_mask)
 
         return_dict = {}
 
@@ -373,12 +387,14 @@ class GirNetLM(Model):
         )
         return_dict.update(cm_dict)
 
-        average_loss = (lang1_dict['lang1_loss'] + lang2_dict['lang2_loss'] + (2*cm_dict['cm_loss'])) / 4
+        average_loss = (lang1_dict['lang1_loss'] + lang2_dict['lang2_loss'] + (cm_dict['cm_loss'])) / 3
         return_dict.update({
             "loss": average_loss
         })
 
         return return_dict
+
+
 
     def _each_lang_lost(self, mask,
                         source: Dict[str, torch.LongTensor],
