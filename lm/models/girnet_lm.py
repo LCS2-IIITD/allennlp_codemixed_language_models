@@ -1,4 +1,5 @@
 import numpy as np
+
 from allennlp.data.vocabulary import Vocabulary
 from allennlp.models.model import Model
 from allennlp.modules.sampled_softmax_loss import SampledSoftmaxLoss
@@ -352,6 +353,8 @@ class GirNetLM(Model):
             cm_embeddings, cm_mask)
         cm_lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
             cm_embeddings, cm_mask)
+        cm_lang1_contextual_embeddings, _ = cm_lang1_contextual_embeddings.chunk(2, -1)
+        cm_lang2_contextual_embeddings, _ = cm_lang2_contextual_embeddings.chunk(2, -1)
         cm_cat_contextual_embeddings = torch.cat([cm_lang1_contextual_embeddings, cm_lang2_contextual_embeddings], -1)
 
         # now get a gate

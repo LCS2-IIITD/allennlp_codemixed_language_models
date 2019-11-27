@@ -60,9 +60,15 @@
             "type": "bidirectional_language_model_transformer",
             "dropout": 0.3,
             "hidden_dim": 512,
-            "input_dim": 256,
+            "input_dim": 512,
             "input_dropout": 0.3,
-            "num_layers": 3
+            "num_layers": 2
+//             "type": "lstm",
+//            "bidirectional": true,
+//            "dropout": 0.33,
+//            "hidden_size": 512,
+//            "input_size": 512,
+//            "num_layers": 3
         },
         "dropout": 0.3,
         "main_contextualizer": {
@@ -71,6 +77,12 @@
             "hidden_dim": 512,
             "input_dim": 1024,
             "num_layers": 2
+//            "type": "lstm",
+//            "bidirectional": true,
+//            "dropout": 0.33,
+//            "hidden_size": 512,
+//            "input_size": 1024,
+//            "num_layers": 3
         },
         "num_samples": 8126,
         "sparse_embeddings": true,
@@ -119,7 +131,7 @@
                             ]
                         ],
                         "num_highway": 2,
-                        "projection_dim": 256,
+                        "projection_dim": 512,
                         "projection_location": "after_highway"
                     }
                 }
