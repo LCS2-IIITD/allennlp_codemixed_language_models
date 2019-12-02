@@ -46,10 +46,10 @@
         }
     },
 
-
+    "evaluate_on_test": true,
     "iterator": {
         "type": "basic",
-        "batch_size": 32
+        "batch_size": 16
     },
 
 
@@ -62,12 +62,12 @@
             "hidden_dim": 512,
             "input_dim": 1024,
             "input_dropout": 0.3,
-            "num_layers": 2
-//             "type": "lstm",
-//            "bidirectional": true,
+            "num_layers": 3
+//            "type": "lstm",
+//            "bidirectional": false,
 //            "dropout": 0.33,
 //            "hidden_size": 512,
-//            "input_size": 512,
+//            "input_size": 1024,
 //            "num_layers": 3
         },
         "dropout": 0.3,
@@ -76,8 +76,8 @@
             "bidirectional": false,
             "dropout": 0.33,
             "hidden_size": 512,
-            "input_size": 256,
-            "num_layers": 2
+            "input_size": 512,
+            "num_layers": 3
         },
         "num_samples": 8126,
         "sparse_embeddings": true,
@@ -126,7 +126,7 @@
                             ]
                         ],
                         "num_highway": 2,
-                        "projection_dim": 256,
+                        "projection_dim": 512,
                         "projection_location": "after_highway"
                     }
                 }
@@ -135,13 +135,13 @@
     },
 
     "trainer": {
-        "cuda_device": 0,
+        "cuda_device": -1,
         "learning_rate_scheduler": {
             "type": "noam",
             "model_size": 512,
             "warmup_steps": 6000
         },
-        "num_epochs": 1,
+        "num_epochs": 2,
         "optimizer": {
             "type": "dense_sparse_adam"
         },

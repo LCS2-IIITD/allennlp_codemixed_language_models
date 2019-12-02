@@ -173,11 +173,11 @@ class LanguageModelTokenEmbedder(TokenEmbedder):
             )
 
         source = {self._token_name: inputs}
-        result_dict = self._lm(source)
+        result_dict = self._lm(source, source, source)
 
         # shape (batch_size, timesteps, embedding_size)
-        noncontextual_token_embeddings = result_dict["cm_noncontextual_token_embeddings"]
-        contextual_embeddings = result_dict["cm_lm_embeddings"]
+        noncontextual_token_embeddings = result_dict["noncontextual_token_embeddings"]
+        contextual_embeddings = result_dict["lm_embeddings"]
 
         # Typically the non-contextual embeddings are smaller than the contextualized embeddings.
         # Since we're averaging all the layers we need to make their dimensions match. Simply

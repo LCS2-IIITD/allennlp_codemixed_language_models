@@ -58,6 +58,7 @@ class GirNetLM(Model):
     The ``LanguageModel`` applies a "contextualizing"
     ``Seq2SeqEncoder`` to uncontextualized embeddings, using a ``SoftmaxLoss``
     module (defined above) to compute the language modeling loss.
+    should have "is_bidirectional()"
 
     If bidirectional is True,  the language model is trained to predict the next and
     previous tokens for each token in the input. In this case, the contextualizer must
@@ -96,6 +97,7 @@ class GirNetLM(Model):
         This must match the bidirectionality of the contextualizer.
     regularizer : ``RegularizerApplicator``, optional (default=``None``)
         If provided, will be used to calculate the regularization penalty during training.
+    aux_contextualizer : ``Seq2SeqEncoder``
     """
 
     def __init__(
@@ -103,7 +105,7 @@ class GirNetLM(Model):
             vocab: Vocabulary,
             text_field_embedder: TextFieldEmbedder,
             contextualizer: Seq2SeqEncoder,
-            main_contextualizer: Seq2SeqEncoder,
+            aux_contextualizer: Seq2SeqEncoder,
             dropout: float = None,
             num_samples: int = None,
             sparse_embeddings: bool = False,
@@ -122,51 +124,56 @@ class GirNetLM(Model):
                 f"language model bidirectional: {bidirectional}"
             )
 
-        # TODO: Make 2 contextualizer
-        import copy
-        self._contextualizer_lang1 = copy.deepcopy(contextualizer)
-        self._contextualizer_lang2 = copy.deepcopy(contextualizer)
-        # self._contextualizer_cm = contextualizer
-        self._bidirectional = bidirectional
+        self._contextualizer_lang1 = aux_contextualizer
+        self._contextualizer_lang2 = copy.deepcopy(aux_contextualizer)
+        self._contextualizer = contextualizer
 
-        self.main_contextualizer = main_contextualizer
+        self._bidirectional = bidirectional
+        self._bidirectional_aux = aux_contextualizer.is_bidirectional()
 
         # The dimension for making predictions just in the forward
         # (or backward) direction.
+        # main contextualizer forward dim
         if self._bidirectional:
             self._forward_dim = contextualizer.get_output_dim() // 2
         else:
             self._forward_dim = contextualizer.get_output_dim()
 
+        # aux contextualizer forward dim
+        if self._bidirectional_aux:
+            self._forward_dim_aux = aux_contextualizer.get_output_dim() // 2
+        else:
+            self._forward_dim_aux = aux_contextualizer.get_output_dim()
+
         # TODO(joelgrus): more sampled softmax configuration options, as needed.
         if num_samples is not None:
             self._lang1_softmax_loss = SampledSoftmaxLoss(
                 num_words=vocab.get_vocab_size(),
-                embedding_dim=self._forward_dim,
+                embedding_dim=self._forward_dim_aux,
                 num_samples=num_samples,
                 sparse=sparse_embeddings,
             )
             self._lang2_softmax_loss = SampledSoftmaxLoss(
                 num_words=vocab.get_vocab_size(),
-                embedding_dim=self._forward_dim,
+                embedding_dim=self._forward_dim_aux,
                 num_samples=num_samples,
                 sparse=sparse_embeddings,
             )
             self._cm_softmax_loss = SampledSoftmaxLoss(
                 num_words=vocab.get_vocab_size(),
-                embedding_dim= self.main_contextualizer.get_output_dim() // 2,
+                embedding_dim=self._forward_dim,
                 num_samples=num_samples,
                 sparse=sparse_embeddings,
             )
         else:
             self._lang1_softmax_loss = _SoftmaxLoss(
-                num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim
+                num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim_aux
             )
             self._lang2_softmax_loss = _SoftmaxLoss(
-                num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim
+                num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim_aux
             )
             self._cm_loss = _SoftmaxLoss(
-                num_words=vocab.get_vocab_size(), embedding_dim=self.main_contextualizer.get_output_dim() // 2,
+                num_words=vocab.get_vocab_size(), embedding_dim=self._forward_dim
             )
 
         # This buffer is now unused and exists only for backwards compatibility reasons.
@@ -199,6 +206,15 @@ class GirNetLM(Model):
             -1, self._forward_dim
         )
 
+    def is_label_bidirectional(self, label):
+        if label is 'lang1' or label is 'lang2':
+            return self._bidirectional_aux
+        elif label is 'cm':
+            return self._bidirectional
+        else:
+            raise Exception(f"unknown label {label}")
+
+
     def _compute_loss(
             self,
             lm_embeddings: torch.Tensor,
@@ -211,7 +227,7 @@ class GirNetLM(Model):
         # If unidirectional, lm_embeddings is shape (batch_size, timesteps, dim)
         # forward_targets, backward_targets (None in the unidirectional case) are
         # shape (batch_size, timesteps) masked with 0
-        if self._bidirectional:
+        if self.is_label_bidirectional(label):
             forward_embeddings, backward_embeddings = lm_embeddings.chunk(2, -1)
             backward_loss = self._loss_helper(
                 1, backward_embeddings, backward_targets, token_embeddings, label=label
@@ -240,12 +256,12 @@ class GirNetLM(Model):
 
         if label is "lang1" or label is "lang2":
             non_masked_embeddings = direction_embeddings.masked_select(mask.unsqueeze(-1)).view(
-                -1, self._forward_dim
+                -1, self._forward_dim_aux
             )
         else:
             # shape (batch_size * timesteps, embedding_dim)
             non_masked_embeddings = direction_embeddings.masked_select(mask.unsqueeze(-1)).view(
-                -1, self.main_contextualizer.get_output_dim() // 2
+                -1, self._forward_dim
             )
         # note: need to return average loss across forward and backward
         # directions, but total sum loss across all batches.
@@ -353,12 +369,20 @@ class GirNetLM(Model):
             cm_embeddings, cm_mask)
         cm_lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
             cm_embeddings, cm_mask)
-        cm_lang1_contextual_embeddings, _ = cm_lang1_contextual_embeddings.chunk(2, -1)
-        cm_lang2_contextual_embeddings, _ = cm_lang2_contextual_embeddings.chunk(2, -1)
-        cm_cat_contextual_embeddings = torch.cat([cm_lang1_contextual_embeddings, cm_lang2_contextual_embeddings], -1)
 
-        # now get a gate
-        cm_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self.main_contextualizer(
+        # MERGE aux representations
+        if self._bidirectional_aux:
+            # if aux are bidirectional only consider forward part of the contextual embeddings
+            cm_lang1_contextual_embeddings_forward, _ = cm_lang1_contextual_embeddings.chunk(2, -1)
+            cm_lang2_contextual_embeddings_forward, _ = cm_lang2_contextual_embeddings.chunk(2, -1)
+            cm_cat_contextual_embeddings = torch.cat(
+                [cm_lang1_contextual_embeddings_forward, cm_lang2_contextual_embeddings_forward], -1)
+        else:
+            cm_cat_contextual_embeddings = torch.cat(
+                [cm_lang1_contextual_embeddings, cm_lang2_contextual_embeddings], -1)
+
+        # Run _contextualizer on the merged representation of the input
+        cm_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer(
             cm_cat_contextual_embeddings, cm_mask)
 
         return_dict = {}
@@ -390,10 +414,13 @@ class GirNetLM(Model):
         )
         return_dict.update(cm_dict)
 
-        average_loss = (lang1_dict['lang1_loss'] + lang2_dict['lang2_loss'] + (cm_dict['cm_loss'])) / 3
-        return_dict.update({
-            "loss": average_loss
-        })
+        # If we have target tokens, calculate the loss.
+        token_ids = cm.get("tokens")  # safe
+        if token_ids is not None:
+            average_loss = (lang1_dict['lang1_loss'] + lang2_dict['lang2_loss'] + (cm_dict['cm_loss'])) / 3
+            return_dict.update({
+                "loss": average_loss
+            })
 
         return return_dict
 
@@ -417,14 +444,14 @@ class GirNetLM(Model):
             forward_targets = torch.zeros_like(token_ids)
             forward_targets[:, 0:-1] = token_ids[:, 1:]
 
-            if self._bidirectional:
+            if self.is_label_bidirectional(label):
                 backward_targets = torch.zeros_like(token_ids)
                 backward_targets[:, 1:] = token_ids[:, 0:-1]
             else:
                 backward_targets = None
 
             # add dropout
-            contextual_embeddings_with_dropout = self._dropout(contextual_embeddings)  # TODO: unsafe
+            contextual_embeddings_with_dropout = self._dropout(contextual_embeddings)
 
             # compute softmax loss
             forward_loss, backward_loss = self._compute_loss(
@@ -433,11 +460,11 @@ class GirNetLM(Model):
                 forward_targets,
                 backward_targets,
                 label=label
-            )  # TODO: unsafe
+            )
 
             num_targets = torch.sum((forward_targets > 0).long())
             if num_targets > 0:
-                if self._bidirectional:
+                if self.is_label_bidirectional(label):
                     average_loss = 0.5 * (forward_loss + backward_loss) / num_targets.float()
                 else:
                     average_loss = forward_loss / num_targets.float()
@@ -467,19 +494,28 @@ class GirNetLM(Model):
                 if backward_loss is not None:
                     return_dict[f"{label}_backward_loss"] = average_loss
 
-        return_dict.update(
-            {
-                f"{label}_lm_embeddings": contextual_embeddings,
-                f"{label}_noncontextual_token_embeddings": embeddings,
-                f"{label}_mask": mask,
-            }
-        )
+        if label is "cm":
+            return_dict.update(
+                {
+                    "lm_embeddings": contextual_embeddings,
+                    "noncontextual_token_embeddings": embeddings,
+                    "mask": mask,
+                }
+            )
+        else:
+            return_dict.update(
+                {
+                    f"{label}_lm_embeddings": contextual_embeddings,
+                    f"{label}_noncontextual_token_embeddings": embeddings,
+                    f"{label}_mask": mask,
+                }
+            )
 
         return return_dict
 
     def get_metrics(self, reset: bool = False):
         return {
-            "perplexity_lang1": self._lang1_perplexity.get_metric(reset=reset),
-            "perplexity_lang2": self._lang2_perplexity.get_metric(reset=reset),
-            "perplexity_cm": self._cm_perplexity.get_metric(reset=reset)
+            "ppl_lang1": self._lang1_perplexity.get_metric(reset=reset),
+            "ppl_lang2": self._lang2_perplexity.get_metric(reset=reset),
+            "ppl_cm": self._cm_perplexity.get_metric(reset=reset)
         }
