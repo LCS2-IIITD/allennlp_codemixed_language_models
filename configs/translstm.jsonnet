@@ -2,26 +2,28 @@
 
  "train_data_path":
      std.toString({
-        "lang1": "data/en_es/en_small.txt",
-        "lang2": "data/en_es/es_small.txt",
-        "cm": "data/en_es/train_mixed_big_small.txt",
+        "lang1": "data/cm/mono_en_train.txt",
+        "lang2": "data/cm/mono_es_train.txt",
+        "cm": "data/cm/cm_train.txt",
     }),
-f
+
  "validation_data_path":
      std.toString({
-        "lang1": "data/en_es/test.txt",
-        "lang2": "data/en_es/test.txt",
-        "cm": "data/en_es/test.txt",
+        "lang1": "data/cm/cm_valid.txt",
+        "lang2": "data/cm/cm_valid.txt",
+        "cm": "data/cm/cm_valid.txt",
     }),
 
   "test_data_path":
      std.toString({
-        "lang1": "data/en_es/test.txt",
-        "lang2": "data/en_es/test.txt",
-        "cm": "data/en_es/test.txt",
+        "lang1": "data/cm/cm_test.txt",
+        "lang2": "data/cm/cm_test.txt",
+        "cm": "data/cm/cm_test.txt",
     }),
 
-    "dataset_reader": {
+   "evaluate_on_test": true,
+
+   "dataset_reader": {
         "type": "girnet_lm_reader",
         "end_tokens": [
             "</S>"
@@ -46,7 +48,31 @@ f
         }
     },
 
-    "evaluate_on_test": true,
+   "validation_dataset_reader": {
+        "type": "girnet_lm_reader",
+        "end_tokens": [
+            "</S>"
+        ],
+        "max_sequence_length": 500,
+        "start_tokens": [
+            "<S>"
+        ],
+        "token_indexers": {
+            "token_characters": {
+                "type": "elmo_characters"
+            },
+            "tokens": {
+                "type": "single_id"
+            }
+        },
+        "tokenizer": {
+            "type": "word",
+            "word_splitter": {
+                "type": "just_spaces"
+            }
+        }
+    },
+
     "iterator": {
         "type": "basic",
         "batch_size": 32
@@ -55,31 +81,25 @@ f
 
     "model": {
         "type": "girnet_lm",
-        "bidirectional": false,
+        "bidirectional": true,
         "contextualizer": {
-//            "type": "bidirectional_language_model_transformer",
-//            "dropout": 0.3,
-//            "hidden_dim": 512,
-//            "input_dim": 1024,
-//            "input_dropout": 0.3,
-//            "num_layers": 1
-            "type": "lstm",
-            "bidirectional": false,
-            "dropout": 0.33,
-            "hidden_size": 512,
-            "input_size": 1024,
+            "type": "translstm_transformer",
+            "dropout": 0.3,
+            "hidden_dim": 512,
+            "input_dim": 1024,
+            "input_dropout": 0.3,
             "num_layers": 1
         },
         "dropout": 0.3,
         "aux_contextualizer": {
             "type": "lstm",
-            "bidirectional": false,
+            "bidirectional": true,
             "dropout": 0.33,
             "hidden_size": 512,
             "input_size": 512,
             "num_layers": 1
         },
-        "num_samples": 8126,
+        "num_samples": 4096,
         "sparse_embeddings": true,
         "text_field_embedder": {
             "allow_unmatched_keys": true,
@@ -136,6 +156,7 @@ f
 
     "trainer": {
         "cuda_device": 0,
+        "validation_metric": "-ppl_cm",
         "learning_rate_scheduler": {
             "type": "noam",
             "model_size": 512,
@@ -147,7 +168,4 @@ f
         },
         "should_log_learning_rate": true
     },
-//    "vocabulary": {
-//        "directory_path": "store/all_vocab/vocabulary/"
-//    }
 }

@@ -65,15 +65,16 @@ class CMSentimentAnalysisReader(DatasetReader):
                 try:
                     text = items[0]
                     label = items[1]
-                    lang = items[3]
+                    lang = items[2].strip()
                 except IndexError:
                     logger.warning(f"werid sentence: {items}")
                     continue
 
 
                 # gives all instances if lang = all, otherwise returns only a particular instance
-                if (self.lang is not "all") and (self.lang is not lang):
-                    continue
+                if (self.lang != "all"):
+                    if (self.lang != lang):
+                        continue
 
                 if self._skip_label_indexing:
                     try:

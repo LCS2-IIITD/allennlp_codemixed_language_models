@@ -1,9 +1,12 @@
 {
   "train_data_path": "data/sentiment_analysis/train.txt",
+  "validation_data_path": "data/sentiment_analysis/test.txt",
   "test_data_path": "data/sentiment_analysis/test.txt",
   "evaluate_on_test": true,
+
   "dataset_reader": {
     "type": "cm_sentiment_analysis",
+    "lang":"cm",
      "token_indexers": {
               "elmo": {
                 "type": "elmo_characters"
@@ -21,8 +24,10 @@
     "text_field_embedder": {
       "token_embedders": {
         "elmo": {
-          "type": "girnet_lm_token_embedder",
-          "archive_file": "./store/en_es_perfect/",
+//          "type": "girnet_lm_token_embedder",
+          "type": "bidirectional_lm_token_embedder",
+//          "archive_file": "./store/en_es_perfect/",
+          "archive_file": "./store/en_es_baseline/",
           "dropout": 0.2,
           "bos_eos_tokens": ["<S>", "</S>"],
           "remove_bos_eos": true,
@@ -33,7 +38,7 @@
     "seq2vec_encoder": {
       "type": "gru",
       "bidirectional": true,
-      "input_size": 2048,
+      "input_size": 1024,
       "hidden_size": 1024,
       "num_layers": 2
     },
@@ -45,7 +50,7 @@
     "batch_size": 16
   },
   "trainer": {
-    "num_epochs": 100,
+    "num_epochs": 10,
     "cuda_device": 0,
     "optimizer": {
       "type": "adam",

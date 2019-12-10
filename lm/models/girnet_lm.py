@@ -363,28 +363,6 @@ class GirNetLM(Model):
         lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
             lang2_embeddings, lang2_mask)
 
-        ## GIRNET STUFF
-        # get lang1 and lang2 embedding of code_mixed data
-        cm_lang1_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang1(
-            cm_embeddings, cm_mask)
-        cm_lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
-            cm_embeddings, cm_mask)
-
-        # MERGE aux representations
-        if self._bidirectional_aux:
-            # if aux are bidirectional only consider forward part of the contextual embeddings
-            cm_lang1_contextual_embeddings_forward, _ = cm_lang1_contextual_embeddings.chunk(2, -1)
-            cm_lang2_contextual_embeddings_forward, _ = cm_lang2_contextual_embeddings.chunk(2, -1)
-            cm_cat_contextual_embeddings = torch.cat(
-                [cm_lang1_contextual_embeddings_forward, cm_lang2_contextual_embeddings_forward], -1)
-        else:
-            cm_cat_contextual_embeddings = torch.cat(
-                [cm_lang1_contextual_embeddings, cm_lang2_contextual_embeddings], -1)
-
-        # Run _contextualizer on the merged representation of the input
-        cm_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer(
-            cm_cat_contextual_embeddings, cm_mask)
-
         return_dict = {}
 
         lang1_dict = self._each_lang_lost(
@@ -404,6 +382,28 @@ class GirNetLM(Model):
             label='lang2'
         )
         return_dict.update(lang2_dict)
+
+        ## GIRNET STUFF
+        # get lang1 and lang2 embedding of code_mixed data
+        cm_lang1_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang1(
+            cm_embeddings, cm_mask)
+        cm_lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
+            cm_embeddings, cm_mask)
+        #
+        # # MERGE aux representations
+        # if self._bidirectional_aux:
+        #     # if aux are bidirectional only consider forward part of the contextual embeddings
+        #     cm_lang1_contextual_embeddings_forward, _ = cm_lang1_contextual_embeddings.chunk(2, -1)
+        #     cm_lang2_contextual_embeddings_forward, _ = cm_lang2_contextual_embeddings.chunk(2, -1)
+        #     cm_cat_contextual_embeddings = torch.cat(
+        #         [cm_lang1_contextual_embeddings_forward, cm_lang2_contextual_embeddings_forward], -1)
+        # else:
+        cm_cat_contextual_embeddings = torch.cat(
+            [cm_lang1_contextual_embeddings, cm_lang2_contextual_embeddings], -1)
+
+        # Run _contextualizer on the merged representation of the input
+        cm_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer(
+            cm_cat_contextual_embeddings, cm_mask)
 
         cm_dict = self._each_lang_lost(
             mask=cm_mask,
@@ -466,6 +466,7 @@ class GirNetLM(Model):
             if num_targets > 0:
                 if self.is_label_bidirectional(label):
                     average_loss = 0.5 * (forward_loss + backward_loss) / num_targets.float()
+                    # average_loss = forward_loss / num_targets.float()
                 else:
                     average_loss = forward_loss / num_targets.float()
             else:
