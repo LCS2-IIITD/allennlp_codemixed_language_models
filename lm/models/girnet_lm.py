@@ -417,7 +417,7 @@ class GirNetLM(Model):
         # If we have target tokens, calculate the loss.
         token_ids = cm.get("tokens")  # safe
         if token_ids is not None:
-            average_loss = (lang1_dict['lang1_loss'] + lang2_dict['lang2_loss'] + (cm_dict['cm_loss'])) / 3
+            average_loss = (lang1_dict['lang1_loss'] + lang2_dict['lang2_loss'] + (2*cm_dict['cm_loss'])) / 4
             return_dict.update({
                 "loss": average_loss
             })

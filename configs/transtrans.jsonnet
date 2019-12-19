@@ -4,7 +4,7 @@
      std.toString({
         "lang1": "data/cm/mono_en_train.txt",
         "lang2": "data/cm/mono_es_train.txt",
-        "cm": "data/cm/mono_all_train.txt",
+        "cm": "data/cm/cm_train.txt",
     }),
 
  "validation_data_path":
@@ -75,28 +75,28 @@
 
     "iterator": {
         "type": "basic",
-        "batch_size": 32
+        "batch_size": 64
     },
 
 
     "model": {
         "type": "girnet_lm",
-        "bidirectional": false,
+        "bidirectional": true,
         "contextualizer": {
-            "type": "lstm",
-            "bidirectional": false,
-            "dropout": 0.33,
-            "hidden_size": 512,
-            "input_size": 1024,
+            "type": "translstm_transformer",
+            "dropout": 0.3,
+            "hidden_dim": 512,
+            "input_dim": 1024,
+            "input_dropout": 0.3,
             "num_layers": 1
         },
         "dropout": 0.3,
         "aux_contextualizer": {
-            "type": "lstm",
-            "bidirectional": false,
-            "dropout": 0.33,
-            "hidden_size": 512,
-            "input_size": 512,
+            "type": "bidirectional_language_model_transformer",
+            "dropout": 0.3,
+            "hidden_dim": 512,
+            "input_dim": 512,
+            "input_dropout": 0.3,
             "num_layers": 1
         },
         "num_samples": 4096,
@@ -157,11 +157,16 @@
     "trainer": {
         "cuda_device": 0,
         "validation_metric": "-ppl_cm",
-        "num_epochs": 4,
+        "learning_rate_scheduler": {
+            "type": "noam",
+            "model_size": 512,
+            "warmup_steps": 6000
+        },
+        "num_epochs": 15,
+        "patience": 2,
         "optimizer": {
             "type": "dense_sparse_adam"
         },
-        "grad_norm": 10.0,
         "should_log_learning_rate": true
     },
 }
