@@ -1,11 +1,6 @@
 """
-The BidirectionalTransformerEncoder from Calypso.
-This is basically the transformer from https://nlp.seas.harvard.edu/2018/04/03/attention.html
-so credit to them.
-
-This code should be considered "private" in that we have several
-transformer implementations and may end up deleting this one.
-If you use it, consider yourself warned.
+This is the Transformer code taken from AllenNLP
+This is have been modified so that it can handles both bidirectional and non-birectional inputs. LOL!
 """
 
 import math
@@ -208,6 +203,7 @@ class BidirectionalLanguageModelTransformer(Seq2SeqEncoder):
             dropout: float = 0.1,
             input_dropout: float = None,
             return_all_layers: bool = False,
+            receive_bidirectional: bool = True,
     ) -> None:
 
         warnings.warn(
@@ -222,6 +218,7 @@ class BidirectionalLanguageModelTransformer(Seq2SeqEncoder):
         self._return_all_layers = return_all_layers
         self.transformer_layers = num_layers
         self.num_layers = num_layers
+        self.receive_bidirectional = receive_bidirectional
 
         self._forward_transformer = make_model(
             input_size=input_dim,
@@ -273,22 +270,20 @@ class BidirectionalLanguageModelTransformer(Seq2SeqEncoder):
     def forward(self, token_embeddings: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         forward_mask, backward_mask = self.get_attention_masks(mask.int())
 
-        token_embeddings_forward, token_embeddings_lstm1_backward, \
-        token_embeddings_lstm2_forward, token_embeddings_lstm2_backward = token_embeddings.chunk(2, -1)
+        if self.receive_bidirectional:
+            token_embeddings_forward, token_embeddings_backward = token_embeddings.chunk(2, -1)
 
-        token_embeddings_forward = torch.cat(
-            [token_embeddings_lstm1_forward, token_embeddings_lstm2_forward], -1)
-        token_embeddings_backward = torch.cat(
-            [token_embeddings_lstm1_backward, token_embeddings_lstm2_backward], -1)
+            # token_embeddings_forward = self._position(token_embeddings_forward)
+            token_embeddings_forward = self._dropout(token_embeddings_forward)
 
-        token_embeddings_forward = self._position(token_embeddings_forward)
-        token_embeddings_forward = self._dropout(token_embeddings_forward)
+            # token_embeddings_backward = self._position(token_embeddings_backward)
+            token_embeddings_backward = self._dropout(token_embeddings_backward)
 
-        token_embeddings_backward = self._position(token_embeddings_backward)
-        token_embeddings_backward = self._dropout(token_embeddings_backward)
-
-        forward_output = self._forward_transformer(token_embeddings_forward, forward_mask)
-        backward_output = self._backward_transformer(token_embeddings_backward, backward_mask)
+            forward_output = self._forward_transformer(token_embeddings_forward, forward_mask)
+            backward_output = self._backward_transformer(token_embeddings_backward, backward_mask)
+        else:
+            forward_output = self._forward_transformer(token_embeddings, forward_mask)
+            backward_output = self._backward_transformer(token_embeddings, backward_mask)
 
         if self._return_all_layers:
             to_return = []

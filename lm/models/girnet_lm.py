@@ -389,19 +389,33 @@ class GirNetLM(Model):
             cm_embeddings, cm_mask)
         cm_lang2_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer_lang2(
             cm_embeddings, cm_mask)
-        #
-        # # MERGE aux representations
-        # if self._bidirectional_aux:
-        #     # if aux are bidirectional only consider forward part of the contextual embeddings
-        #     cm_lang1_contextual_embeddings_forward, _ = cm_lang1_contextual_embeddings.chunk(2, -1)
-        #     cm_lang2_contextual_embeddings_forward, _ = cm_lang2_contextual_embeddings.chunk(2, -1)
-        #     cm_cat_contextual_embeddings = torch.cat(
-        #         [cm_lang1_contextual_embeddings_forward, cm_lang2_contextual_embeddings_forward], -1)
-        # else:
-        cm_cat_contextual_embeddings = torch.cat(
-            [cm_lang1_contextual_embeddings, cm_lang2_contextual_embeddings], -1)
 
-        # Run _contextualizer on the merged representation of the input
+        # MERGE aux representations
+        if self._bidirectional_aux and self._bidirectional:
+            # if both of them are bidirectiona;
+            cm_lang1_contextual_embeddings_forward, cm_lang1_contextual_embeddings_backward = cm_lang1_contextual_embeddings.chunk(
+                2, -1)
+            cm_lang2_contextual_embeddings_forward, cm_lang2_contextual_embeddings_backward = cm_lang2_contextual_embeddings.chunk(
+                2, -1)
+
+            cm_cat_contextual_embeddings_forward = torch.cat([cm_lang1_contextual_embeddings_forward,
+                                                              cm_lang2_contextual_embeddings_forward], -1)
+            cm_cat_contextual_embeddings_backward = torch.cat([cm_lang1_contextual_embeddings_backward,
+                                                               cm_lang2_contextual_embeddings_backward], -1)
+
+            cm_cat_contextual_embeddings = torch.cat(
+                [cm_cat_contextual_embeddings_forward, cm_embeddings,
+                 cm_cat_contextual_embeddings_backward, cm_embeddings],
+                -1)
+        elif not self._bidirectional_aux and not self._bidirectional:
+            # if both of them are unidirectional
+            cm_cat_contextual_embeddings = torch.cat([cm_lang1_contextual_embeddings,
+                                                      cm_lang2_contextual_embeddings,
+                                                      cm_embeddings], -1)
+        else:
+            raise Exception("contextualizer and aux_contextualizer should have same directionality")
+
+        # Run _contextualizer on the merged r2epresentation of the input
         cm_contextual_embeddings: Union[torch.Tensor, List[torch.Tensor]] = self._contextualizer(
             cm_cat_contextual_embeddings, cm_mask)
 
