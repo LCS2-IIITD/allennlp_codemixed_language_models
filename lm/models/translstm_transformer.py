@@ -273,8 +273,8 @@ class BidirectionalLanguageModelTransformer(Seq2SeqEncoder):
     def forward(self, token_embeddings: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         forward_mask, backward_mask = self.get_attention_masks(mask.int())
 
-        token_embeddings_lstm1_forward, token_embeddings_lstm1_backward, \
-        token_embeddings_lstm2_forward, token_embeddings_lstm2_backward = token_embeddings.chunk(4, -1)
+        token_embeddings_forward, token_embeddings_lstm1_backward, \
+        token_embeddings_lstm2_forward, token_embeddings_lstm2_backward = token_embeddings.chunk(2, -1)
 
         token_embeddings_forward = torch.cat(
             [token_embeddings_lstm1_forward, token_embeddings_lstm2_forward], -1)

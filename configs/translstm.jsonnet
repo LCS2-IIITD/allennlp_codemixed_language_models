@@ -4,7 +4,7 @@
      std.toString({
         "lang1": "data/cm/mono_en_train.txt",
         "lang2": "data/cm/mono_es_train.txt",
-        "cm": "data/cm/cm_train.txt",
+        "cm": "data/cm/cm_train_50k.txt",
     }),
 
  "validation_data_path":
@@ -154,6 +154,15 @@
         }
     },
 
+
+    "vocabulary": {
+       "tokens_to_add": {
+           "tokens": ["<S>", "</S>"],
+           "token_characters": ["<>/S"]
+       },
+       "min_count": {"tokens": 5}
+   },
+
     "trainer": {
         "cuda_device": 0,
         "validation_metric": "-ppl_cm",
@@ -162,6 +171,7 @@
             "model_size": 512,
             "warmup_steps": 6000
         },
+         "patience": 2,
         "num_epochs": 10,
         "optimizer": {
             "type": "dense_sparse_adam"

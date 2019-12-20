@@ -28,8 +28,6 @@ from allennlp.training.optimizers import Optimizer
 from allennlp.training.tensorboard_writer import TensorboardWriter
 from allennlp.training.trainer_base import TrainerBase
 
-from ..readers.girnet_lm_reader import  GirNetLMDatasetReader
-
 logger = logging.getLogger(__name__)
 
 
@@ -257,7 +255,7 @@ class MultiTrainer(TrainerBase):
         if histogram_interval is not None:
             self._tensorboard.enable_activation_logging(self.model)
 
-        logger.info("Making MultiTrainer")
+        logger.info("Made MultiTrainer")
 
     def rescale_gradients(self) -> Optional[float]:
         return training_util.rescale_gradients(self.model, self._grad_norm)
@@ -342,11 +340,17 @@ class MultiTrainer(TrainerBase):
                 raise ValueError("nan loss encountered")
 
             # loss.backward()
-            loss_cm.backward()
             loss_lang1.backward()
-            loss_lang2.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad()
 
-            train_loss += loss.item()
+            loss_lang2.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+
+            loss_cm.backward()
+
+            train_loss += loss_cm.item()
 
             batch_grad_norm = self.rescale_gradients()
 
