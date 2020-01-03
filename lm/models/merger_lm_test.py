@@ -52,7 +52,7 @@ class _SoftmaxLoss(torch.nn.Module):
         return torch.nn.functional.nll_loss(probs, targets.long(), reduction="sum")
 
 
-@Model.register("girnet_lm")
+@Model.register("girnet_lm_merge")
 class GirNetLM(Model):
     """
     The ``LanguageModel`` applies a "contextualizing"

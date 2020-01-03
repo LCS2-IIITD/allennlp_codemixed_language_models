@@ -160,7 +160,9 @@ def train_model(
             params, serialization_dir, recover, cache_directory, cache_prefix
         )
         logger.info("Using MultiTrainer")
-        trainer = MultiTrainer.from_params(
+        from lm.trainining.MultiTaskTrainer import MultiTaskTrainer
+        # MultiTrainer
+        trainer = MultiTaskTrainer.from_params(
             model=pieces.model,
             serialization_dir=serialization_dir,
             iterator=pieces.iterator,

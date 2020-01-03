@@ -13,7 +13,6 @@ from allennlp.common import Params
 from allennlp.common.checks import ConfigurationError, parse_cuda_device
 from allennlp.common.tqdm import Tqdm
 from allennlp.common.util import dump_metrics, gpu_memory_mb, peak_memory_mb, lazy_groups_of
-from allennlp.data import DatasetReader, Vocabulary
 from allennlp.data.instance import Instance
 from allennlp.data.iterators.data_iterator import DataIterator, TensorDict
 from allennlp.models.model import Model
@@ -28,16 +27,15 @@ from allennlp.training.optimizers import Optimizer
 from allennlp.training.tensorboard_writer import TensorboardWriter
 from allennlp.training.trainer_base import TrainerBase
 
-
 logger = logging.getLogger(__name__)
 
 
-@TrainerBase.register("multi_trainer")
-class MultiTrainer(TrainerBase):
+@TrainerBase.register("mult-task-trainer")
+class MultiTaskTrainer(TrainerBase):
     def __init__(
             self,
             model: Model,
-            optimizer: torch.optim.Optimizer,
+            optimizer,
             iterator: DataIterator,
             train_dataset: Iterable[Instance],
             validation_dataset: Optional[Iterable[Instance]] = None,
@@ -54,14 +52,14 @@ class MultiTrainer(TrainerBase):
             cuda_device: Union[int, List] = -1,
             grad_norm: Optional[float] = None,
             grad_clipping: Optional[float] = None,
-            learning_rate_scheduler: Optional[LearningRateScheduler] = None,
-            momentum_scheduler: Optional[MomentumScheduler] = None,
+            learning_rate_scheduler=None,
+            momentum_scheduler=None,
             summary_interval: int = 100,
             histogram_interval: int = None,
             should_log_parameter_statistics: bool = True,
             should_log_learning_rate: bool = False,
             log_batch_size_period: Optional[int] = None,
-            moving_average: Optional[MovingAverage] = None,
+            moving_average=None,
     ) -> None:
         """
         A trainer for doing supervised learning. It just takes a labeled dataset
@@ -183,7 +181,17 @@ class MultiTrainer(TrainerBase):
         self.iterator = iterator
         self._validation_iterator = validation_iterator
         self.shuffle = shuffle
-        self.optimizer = optimizer
+
+        optimiser_params = optimizer
+        parameters = [[n, p] for n, p in model.named_parameters() if p.requires_grad]
+
+        from copy import deepcopy
+
+        self.optimizer = Optimizer.from_params(parameters, deepcopy(optimiser_params))
+        self.optimizer_lang1 = Optimizer.from_params(parameters, deepcopy(optimiser_params))
+        self.optimizer_lang2 = Optimizer.from_params(parameters, deepcopy(optimiser_params))
+        self.optimizer_cm = Optimizer.from_params(parameters, deepcopy(optimiser_params))
+
         self.train_data = train_dataset
         self._validation_data = validation_dataset
 
@@ -230,9 +238,28 @@ class MultiTrainer(TrainerBase):
         self._grad_norm = grad_norm
         self._grad_clipping = grad_clipping
 
-        self._learning_rate_scheduler = learning_rate_scheduler
-        self._momentum_scheduler = momentum_scheduler
-        self._moving_average = moving_average
+        if learning_rate_scheduler:
+            self._learning_rate_scheduler = LearningRateScheduler.from_params(self.optimizer,
+                                                                              deepcopy(learning_rate_scheduler))
+            self._learning_rate_scheduler_lang1 = LearningRateScheduler.from_params(self.optimizer_lang1,
+                                                                                    deepcopy(learning_rate_scheduler))
+            self._learning_rate_scheduler_lang2 = LearningRateScheduler.from_params(self.optimizer_lang2,
+                                                                                    deepcopy(learning_rate_scheduler))
+            self._learning_rate_scheduler_cm = LearningRateScheduler.from_params(self.optimizer_cm,
+                                                                                 deepcopy(learning_rate_scheduler))
+        else:
+            self._learning_rate_scheduler, self._learning_rate_scheduler_lang1, self._learning_rate_scheduler_lang2, self._learning_rate_scheduler_cm = None, None, None, None
+
+        if momentum_scheduler:
+            self._momentum_scheduler = MomentumScheduler.from_params(self.optimizer, deepcopy(momentum_scheduler))
+            self._momentum_scheduler_lang1 = MomentumScheduler.from_params(self.optimizer_lang1, deepcopy(momentum_scheduler))
+            self._momentum_scheduler_lang2 = MomentumScheduler.from_params(self.optimizer_lang2, deepcopy(momentum_scheduler))
+            self._momentum_scheduler_cm = MomentumScheduler.from_params(self.optimizer_lang3, deepcopy(momentum_scheduler))
+        else:
+            self._momentum_scheduler, self._momentum_scheduler_lang1, self._momentum_scheduler_lang2, self._momentum_scheduler_cm = None, None, None, None
+
+        # WE HAVE NOT USED IT YET
+        self._moving_average, self.moving_average_lang1, self.moving_average_lang2, self.moving_average_cm = None, None, None, None
 
         # We keep the total batch number as an instance variable because it
         # is used inside a closure for the hook which logs activations in
@@ -256,15 +283,13 @@ class MultiTrainer(TrainerBase):
         if histogram_interval is not None:
             self._tensorboard.enable_activation_logging(self.model)
 
-        logger.info("Made MultiTrainer")
-
     def rescale_gradients(self) -> Optional[float]:
         return training_util.rescale_gradients(self.model, self._grad_norm)
 
     def batch_loss(self, batch_group: List[TensorDict], for_training: bool) -> (
             torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
         """
-        Does a forward pass on the given batches and returns the ``loss`` value in the result.
+        Does a forward pass on the given batches and returns the ``loss`` value FOR ALL THE TASKS in the result.
         If ``for_training`` is `True` also applies regularization penalty.
         """
         if self._multiple_gpu:
@@ -280,11 +305,13 @@ class MultiTrainer(TrainerBase):
             loss_cm = output_dict['cm_loss']
             loss_lang1 = output_dict['lang1_loss']
             loss_lang2 = output_dict['lang2_loss']
+
             if for_training:
                 loss += self.model.get_regularization_penalty()
                 loss_cm += self.model.get_regularization_penalty()
                 loss_lang1 += self.model.get_regularization_penalty()
                 loss_lang2 += self.model.get_regularization_penalty()
+
         except KeyError:
             if for_training:
                 raise RuntimeError(
@@ -293,7 +320,7 @@ class MultiTrainer(TrainerBase):
                 )
             loss, loss_cm, loss_lang1, loss_lang2 = None, None, None, None
 
-        return (loss, loss_cm, loss_lang1, loss_lang2)
+        return loss, loss_cm, loss_lang1, loss_lang2
 
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
         """
@@ -308,6 +335,10 @@ class MultiTrainer(TrainerBase):
             logger.info(f"GPU {gpu} memory usage MB: {memory}")
 
         train_loss = 0.0
+        train_loss_lang1 = 0.0
+        train_loss_lang2 = 0.0
+        train_loss_cm = 0.0
+
         # Set the model to "train" mode.
         self.model.train()
 
@@ -329,70 +360,77 @@ class MultiTrainer(TrainerBase):
         logger.info("Training")
         train_generator_tqdm = Tqdm.tqdm(train_generator, total=num_training_batches)
         cumulative_batch_size = 0
+
         for batch_group in train_generator_tqdm:
             batches_this_epoch += 1
             self._batch_num_total += 1
             batch_num_total = self._batch_num_total
 
             self.optimizer.zero_grad()
+            self.optimizer_lang1.zero_grad()
+            self.optimizer_lang2.zero_grad()
+            self.optimizer_cm.zero_grad()
+
             loss, loss_cm, loss_lang1, loss_lang2 = self.batch_loss(batch_group, for_training=True)
 
             if torch.isnan(loss):
+                # if either on of loss_%s is nan, loss will be nan
                 raise ValueError("nan loss encountered")
 
-            # loss.backward()
-
-
-            # language 1 apply
+            #######
+            # lang1
+            #######
             loss_lang1.backward()
+            train_loss_lang1 += loss_lang1.item()
             self.rescale_gradients()
-            self.optimizer.step()
 
-            self.optimizer.zero_grad()
+            if self._learning_rate_scheduler_lang1:
+                self._learning_rate_scheduler_lang1.step_batch(batch_num_total)
+            if self._momentum_scheduler_lang1:
+                self._momentum_scheduler_lang1.step_batch(batch_num_total)
 
-            # language 2 apply
+            self.optimizer_lang1.step()
+            self.optimizer_lang1.zero_grad()
+
+            #######
+            # cm
+            #######
             loss_lang2.backward()
-            self.rescale_gradients()
-            self.optimizer.step()
-            self.optimizer.zero_grad()
-
-            # code-mixed apply
-            loss_cm.backward()
-            train_loss += loss_cm.item()
+            train_loss_lang2 += loss_lang2.item()
             batch_grad_norm = self.rescale_gradients()
 
-            # This does nothing if batch_num_total is None or you are using a
-            # scheduler which doesn't update per batch.
-            if self._learning_rate_scheduler:
-                self._learning_rate_scheduler.step_batch(batch_num_total)
-            if self._momentum_scheduler:
-                self._momentum_scheduler.step_batch(batch_num_total)
+            if self._learning_rate_scheduler_lang2:
+                self._learning_rate_scheduler_lang2.step_batch(batch_num_total)
+            if self._momentum_scheduler_lang2:
+                self._momentum_scheduler_lang2.step_batch(batch_num_total)
 
-            if self._tensorboard.should_log_histograms_this_batch():
-                # get the magnitude of parameter updates for logging
-                # We need a copy of current parameters to compute magnitude of updates,
-                # and copy them to CPU so large models won't go OOM on the GPU.
-                param_updates = {
-                    name: param.detach().cpu().clone()
-                    for name, param in self.model.named_parameters()
-                }
-                self.optimizer.step()
-                for name, param in self.model.named_parameters():
-                    param_updates[name].sub_(param.detach().cpu())
-                    update_norm = torch.norm(param_updates[name].view(-1))
-                    param_norm = torch.norm(param.view(-1)).cpu()
-                    self._tensorboard.add_train_scalar(
-                        "gradient_update/" + name, update_norm / (param_norm + 1e-7)
-                    )
-            else:
-                self.optimizer.step()
+            self.optimizer_lang2.step()
+            self.optimizer_lang2.zero_grad()
 
-            # Update moving averages
-            if self._moving_average is not None:
-                self._moving_average.apply(batch_num_total)
+            #######
+            # lang2
+            #######
+            loss_cm.backward()
+            train_loss_cm += loss_cm.item()
+            self.rescale_gradients()
+
+            if self._learning_rate_scheduler_cm:
+                self._learning_rate_scheduler_cm.step_batch(batch_num_total)
+            if self._momentum_scheduler_cm:
+                self._momentum_scheduler_cm.step_batch(batch_num_total)
+
+            self.optimizer_cm.step()
+            self.optimizer_cm.zero_grad()
+
+            train_loss += loss.item()
 
             # Update the description with the latest metrics
-            metrics = training_util.get_metrics(self.model, train_loss, batches_this_epoch)
+            # metrics = training_util.get_metrics(self.model, train_loss, batches_this_epoch)
+            metrics = self.model.get_metrics(False)
+            metrics["loss"] = float(train_loss / batches_this_epoch) if batches_this_epoch > 0 else 0.0
+            metrics["cm_loss"] = float(train_loss_cm / batches_this_epoch) if batches_this_epoch > 0 else 0.0
+            metrics["lang1_loss"] = float(train_loss_lang1 / batches_this_epoch) if batches_this_epoch > 0 else 0.0
+            metrics["lang2_loss"] = float(train_loss_lang2 / batches_this_epoch) if batches_this_epoch > 0 else 0.0
             description = training_util.description_from_metrics(metrics)
 
             train_generator_tqdm.set_description(description, refresh=False)
@@ -400,9 +438,14 @@ class MultiTrainer(TrainerBase):
             # Log parameter values to Tensorboard
             if self._tensorboard.should_log_this_batch():
                 self._tensorboard.log_parameter_and_gradient_statistics(self.model, batch_grad_norm)
-                self._tensorboard.log_learning_rates(self.model, self.optimizer)
+                self._tensorboard.log_learning_rates(self.model, self.optimizer_lang1)
+                self._tensorboard.log_learning_rates(self.model, self.optimizer_lang2)
+                self._tensorboard.log_learning_rates(self.model, self.optimizer_cm)
 
                 self._tensorboard.add_train_scalar("loss/loss_train", metrics["loss"])
+                self._tensorboard.add_train_scalar("loss/cm_loss_train", metrics["cm_loss"])
+                self._tensorboard.add_train_scalar("loss/lang1_loss_train", metrics["lang1_loss"])
+                self._tensorboard.add_train_scalar("loss/lang2_loss_train", metrics["lang2_loss"])
                 self._tensorboard.log_metrics({"epoch_metrics/" + k: v for k, v in metrics.items()})
 
             if self._tensorboard.should_log_histograms_this_batch():
@@ -425,7 +468,12 @@ class MultiTrainer(TrainerBase):
                 self._save_checkpoint(
                     "{0}.{1}".format(epoch, training_util.time_to_str(int(last_save_time)))
                 )
-        metrics = training_util.get_metrics(self.model, train_loss, batches_this_epoch, reset=True)
+        # metrics = training_util.get_metrics(self.model, train_loss, batches_this_epoch, reset=True)
+        metrics = self.model.get_metrics(reset=True)
+        metrics["loss"] = float(train_loss / batches_this_epoch) if batches_this_epoch > 0 else 0.0
+        metrics["cm_loss"] = float(train_loss_cm / batches_this_epoch) if batches_this_epoch > 0 else 0.0
+        metrics["lang1_loss"] = float(train_loss_lang1 / batches_this_epoch) if batches_this_epoch > 0 else 0.0
+        metrics["lang2_loss"] = float(train_loss_lang2 / batches_this_epoch) if batches_this_epoch > 0 else 0.0
         metrics["cpu_memory_MB"] = peak_cpu_usage
         for (gpu_num, memory) in gpu_usage:
             metrics["gpu_" + str(gpu_num) + "_memory_MB"] = memory
@@ -460,7 +508,8 @@ class MultiTrainer(TrainerBase):
         val_loss = 0
         for batch_group in val_generator_tqdm:
 
-            loss, _, _, _ = self.batch_loss(batch_group, for_training=False)
+            loss, loss_cm, loss_lang1, loss_lang2 = self.batch_loss(batch_group, for_training=False)
+            loss = loss_cm
             if loss is not None:
                 # You shouldn't necessarily have to compute a loss for validation, so we allow for
                 # `loss` to be None.  We need to be careful, though - `batches_this_epoch` is
@@ -700,8 +749,7 @@ class MultiTrainer(TrainerBase):
 
         return epoch_to_return
 
-        # Requires custom from_params.
-
+    # Requires custom from_params.
     @classmethod
     def from_params(  # type: ignore
             cls,
@@ -733,23 +781,16 @@ class MultiTrainer(TrainerBase):
             # the right device.
             model = model.cuda(model_device)
 
+        optimiser_params = params.pop("optimizer")
+
         parameters = [[n, p] for n, p in model.named_parameters() if p.requires_grad]
-        optimizer = Optimizer.from_params(parameters, params.pop("optimizer"))
+        # optimizer = Optimizer.from_params(parameters, optimiser_params)
         if "moving_average" in params:
             moving_average = MovingAverage.from_params(
                 params.pop("moving_average"), parameters=parameters
             )
         else:
             moving_average = None
-
-        if lr_scheduler_params:
-            lr_scheduler = LearningRateScheduler.from_params(optimizer, lr_scheduler_params)
-        else:
-            lr_scheduler = None
-        if momentum_scheduler_params:
-            momentum_scheduler = MomentumScheduler.from_params(optimizer, momentum_scheduler_params)
-        else:
-            momentum_scheduler = None
 
         if "checkpointer" in params:
             if (
@@ -782,7 +823,7 @@ class MultiTrainer(TrainerBase):
         params.assert_empty(cls.__name__)
         return cls(
             model,
-            optimizer,
+            optimiser_params,
             iterator,
             train_data,
             validation_data,
@@ -795,8 +836,8 @@ class MultiTrainer(TrainerBase):
             cuda_device=cuda_device,
             grad_norm=grad_norm,
             grad_clipping=grad_clipping,
-            learning_rate_scheduler=lr_scheduler,
-            momentum_scheduler=momentum_scheduler,
+            learning_rate_scheduler=lr_scheduler_params,
+            momentum_scheduler=momentum_scheduler_params,
             checkpointer=checkpointer,
             model_save_interval=model_save_interval,
             summary_interval=summary_interval,
@@ -804,5 +845,5 @@ class MultiTrainer(TrainerBase):
             should_log_parameter_statistics=should_log_parameter_statistics,
             should_log_learning_rate=should_log_learning_rate,
             log_batch_size_period=log_batch_size_period,
-            moving_average=moving_average,
+            moving_average=None,
         )

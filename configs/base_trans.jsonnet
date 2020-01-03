@@ -1,6 +1,6 @@
 local NUM_GPUS = 1;
 {
-  "train_data_path": "data/cm/all_train.txt",
+  "train_data_path": "data/cm/all_train_50k.tx",
   "validation_data_path": "data/cm/cm_valid.txt",
   "test_data_path": "data/cm/cm_test.txt",
   "evaluate_on_test": true,
@@ -99,8 +99,8 @@ local NUM_GPUS = 1;
     "contextualizer": {
         "type": "bidirectional_language_model_transformer",
         "input_dim": 512,
-        "hidden_dim": 1024,
-        "num_layers": 2,
+        "hidden_dim": 512,
+        "num_layers": 1,
         "dropout": 0.1,
         "input_dropout": 0.1
     }
@@ -118,6 +118,7 @@ local NUM_GPUS = 1;
       // standard "adam" optimizer.
       "type": "dense_sparse_adam"
     },
+    "patience": 2,
     // TODO(brendanr): Needed with transformer too?
     // "grad_norm": 10.0,
     "learning_rate_scheduler": {

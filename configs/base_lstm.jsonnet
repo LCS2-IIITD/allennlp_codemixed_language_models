@@ -1,6 +1,6 @@
 local NUM_GPUS = 1;
 {
-  "train_data_path": "data/cm/mono_all_train.txt",
+  "train_data_path": "data/cm/all_train_50k.tx",
   "validation_data_path": "data/cm/cm_valid.txt",
   "test_data_path": "data/cm/cm_test.txt",
   "evaluate_on_test": true,
@@ -52,7 +52,7 @@ local NUM_GPUS = 1;
            "tokens": ["<S>", "</S>"],
            "token_characters": ["<>/S"]
        },
-       "min_count": {"tokens": 2}
+       "min_count": {"tokens": 3}
    },
 
   "model": {
@@ -100,9 +100,9 @@ local NUM_GPUS = 1;
             "type": "lstm",
             "bidirectional": false,
             "dropout": 0.33,
-            "hidden_size": 1024,
+            "hidden_size": 512,
             "input_size": 512,
-            "num_layers": 11
+            "num_layers": 1
     }
   },
     "iterator": {
@@ -111,7 +111,8 @@ local NUM_GPUS = 1;
     },
   "trainer": {
    "validation_metric": "-perplexity",
-    "num_epochs": 6,
+    "num_epochs": 15,
+    "patience":2,
     "cuda_device" : if NUM_GPUS > 1 then std.range(0, NUM_GPUS - 1) else 0,
     "optimizer": {
       "type": "dense_sparse_adam"
