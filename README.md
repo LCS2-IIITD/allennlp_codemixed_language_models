@@ -12,13 +12,14 @@ A simple `pip install alllennlp` will do the trick.
 ### Training 
 
 There are two training mechanisms for **multi-task models**:
-1. use a loss(lm_en) + loss(lm_es) + loss(lm_cm) for optimisation 
-2. employs individuals optimiser for each loss
+1. use `loss(lm_en) + loss(lm_es) + loss(lm_cm)` for optimisation 
+2. employ individuals optimisers for each loss function
 
 For training using 1., we can simply use AllenNLP train command like: 
 ```
     allennlp train -f --include-package lm --serialization-dir <path_to_save> <path_to_training_config>
 ```
+
 For training using 2., we have to utilise in `train.py` the repo. It's own arguments are exactly like `allennlp train`.  
 ```
      python3 train.py train -f --include-package lm --serialization-dir <path_to_save> <path_to_training_config>
@@ -41,10 +42,12 @@ For training and utilising this code, you will be concerned with the config file
 
 **Baselines**
 - base_lstm.jsonnet: Baseline vanilla language model that uses LSTM
-- base_trans.jsonnet:  Baseline vanilla language model that uses Transformer
+- base_trans.jsonnet:  Baseline vanilla language model that uses Transformer  
+    
 **Proposed Models**
 - catlstm.jsonnet: A multi-task model that uses representation from monolingual LSTM-based language models for Code-Mixed LSTM-based language models
 - transtrans.jsonnet:  A multi-task model that uses representation from monolingual Transformer-based language models for Code-Mixed Transformer-based language models  
+    
 **Others**
 - cm_sentiment_analysis.jsonnet: Doing sentiment analysis using the embeddings from the above.
 - transtrans_test.jsonnet: For testing new things.
