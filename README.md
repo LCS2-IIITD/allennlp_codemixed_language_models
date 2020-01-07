@@ -1,7 +1,7 @@
 # Language Models for Code-Mixed Data using Mulit Task Learning 
 
 In this repo, we explore a few multi task learning for making language models of code-mix data. This code uses
- [AllenNLP](https://github.com/allenai/allennlp).
+ [AllenNLP](https://github.com/allenai/allennlp), therefore familarity with AllenNLP will help in using this codebase.
 
 ## Usage
 
@@ -12,31 +12,31 @@ A simple `pip install alllennlp` will do the trick.
 ### Training 
 
 There are two training mechanisms for **multi-task models**:
-1. use `loss(lm_en) + loss(lm_es) + loss(lm_cm)` for optimisation 
-2. employ individuals optimisers for each loss function
+1. using `loss(lm_en) + loss(lm_es) + loss(lm_cm)` for optimisation 
+2. employing individual optimisers for each loss function
 
-For training using 1., we can simply use AllenNLP train command like: 
+For training using 1., we can simply use `allennlp train` like: 
 ```
     allennlp train -f --include-package lm --serialization-dir <path_to_save> <path_to_training_config>
 ```
 
-For training using 2., we have to utilise in `train.py` the repo. It's own arguments are exactly like `allennlp train`.  
+For training using 2., we have to utilise the `train.py` give in the repo. It behaves exactly like `allennlp` cli interface except for using a custom Trainer made by us.
 ```
      python3 train.py train -f --include-package lm --serialization-dir <path_to_save> <path_to_training_config>
 ```
-In fact, we can use `train.py` to evaluate by using ` python3 train.py evaluate <rest of allennlp commands>`
+We can use the same `train.py` to evaluate by using ` python3 train.py evaluate <rest of allennlp commands>` As said, it behaves exactly like `allennlp` cli interface.
 
 
 ## Folder Structure
-- `/configs`: stores various configuration for various models.
+- `/configs`: stores various configuration for all of our models.
 - `/lm`:  is our language modelling code folder
-    - `/models`: code for various models used by us
-    - `/modules`: code of token embedder that can be used for sentiment analysis and a custom trainer
-    - `/readers`: various dataset readers utilised by us
+    - `/models`: code for models made by us
+    - `/modules`: code of token embedder that can be used for sentiment analysis and also custom trainer
+    - `/readers`: various dataset readers.
 - `/hmtl` is a mini ripoff version of [Hierarchical Multi-Task Learning](https://github.com/huggingface/hmtl)
  for language modelling. It has it own configs, train and modules folder.
  
-For training and utilising this code, you will be concerned with the config files only. 
+For training and utilising this code, you will be concerned with the config files mostly. 
 
 ## Models
 
